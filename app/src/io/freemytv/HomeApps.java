@@ -136,10 +136,10 @@ final class HomeApps {
     static List<Item> shortcuts(Context c) {
         List<Item> items = new ArrayList<>();
         if (liveTv(c) != null) {
-            items.add(shortcut(LIVE_TV, "live", Ui.tr("TV ao Vivo", "Live TV"), "tv"));
+            items.add(shortcut(LIVE_TV, "live", Ui.tr("TV ao Vivo", "Live TV", "TV en vivo"), "tv"));
         }
         items.addAll(inputs(c));
-        items.add(shortcut(ALL_APPS, "all", Ui.tr("Todos os Apps", "All Apps"), "apps"));
+        items.add(shortcut(ALL_APPS, "all", Ui.tr("Todos os Apps", "All Apps", "Todas las apps"), "apps"));
         return items;
     }
 
@@ -159,15 +159,15 @@ final class HomeApps {
 
     /** Free My TV settings, in the corner of the home screen. */
     static Item settings() {
-        return shortcut(SETTINGS, "settings", Ui.tr("Ajustes", "Settings"), "settings");
+        return shortcut(SETTINGS, "settings", Ui.tr("Ajustes", "Settings", "Ajustes"), "settings");
     }
 
     /** Shortcuts in the bottom drawer. */
     static List<Item> drawerShortcuts() {
         List<Item> items = new ArrayList<>();
-        items.add(shortcut(ALL_APPS, "all", Ui.tr("Todos os Apps", "All Apps"), "apps"));
-        items.add(shortcut(SETTINGS, "settings", Ui.tr("Ajustes do Início", "Home Settings"), "settings"));
-        items.add(shortcut(ANDROID_SETTINGS, "tv-settings", Ui.tr("Ajustes da TV", "TV Settings"), "tv_settings"));
+        items.add(shortcut(ALL_APPS, "all", Ui.tr("Todos os Apps", "All Apps", "Todas las apps"), "apps"));
+        items.add(shortcut(SETTINGS, "settings", Ui.tr("Ajustes do Início", "Home Settings", "Ajustes del inicio"), "settings"));
+        items.add(shortcut(ANDROID_SETTINGS, "tv-settings", Ui.tr("Ajustes da TV", "TV Settings", "Ajustes de la TV"), "tv_settings"));
         return items;
     }
 
@@ -184,7 +184,7 @@ final class HomeApps {
     /** For the bottom drawer: live TV and every HDMI input (the ones with no device are shown dimmed). */
     static List<Item> allInputs(Context c) {
         List<Item> items = new ArrayList<>();
-        if (liveTv(c) != null) items.add(shortcut(LIVE_TV, "live", Ui.tr("TV ao Vivo", "Live TV"), "tv"));
+        if (liveTv(c) != null) items.add(shortcut(LIVE_TV, "live", Ui.tr("TV ao Vivo", "Live TV", "TV en vivo"), "tv"));
         items.addAll(inputs(c, true));
         return items;
     }

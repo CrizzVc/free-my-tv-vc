@@ -25,7 +25,8 @@ public class HomeActivity extends Activity {
             HomeMode.requestRevertHome(this);
             TextView t = new TextView(this);
             t.setText(Ui.tr("O Início do Free My TV teve um problema.\nVoltando para o Início original da TV…",
-                    "Free My TV's home screen ran into a problem.\nGoing back to the TV's original home screen…"));
+                    "Free My TV's home screen ran into a problem.\nGoing back to the TV's original home screen…",
+                    "La pantalla de inicio de Free My TV tuvo un problema.\nVolviendo a la pantalla de inicio original de la TV…"));
             t.setTextColor(Color.WHITE);
             t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
             t.setGravity(Gravity.CENTER);
