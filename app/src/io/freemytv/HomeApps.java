@@ -57,6 +57,8 @@ final class HomeApps {
     static final int APP = 0, LIVE_TV = 1, INPUT = 2, ALL_APPS = 3, SETTINGS = 4, ANDROID_SETTINGS = 5;
     /** The "HDMI Inputs" button: opens the bottom drawer on the inputs (the home screen handles it). */
     static final int INPUTS = 7;
+    /** Header actions: Home resets the view, Play Store and Search open their apps. */
+    static final int HOME = 8, PLAY_STORE = 9, SEARCH = 10;
     /** Image size of each card (16:9; on screen it shows up to ~330 px wide). */
     static final int TILE_W = 384, TILE_H = 216;
 
@@ -160,6 +162,15 @@ final class HomeApps {
     /** Free My TV settings, in the corner of the home screen. */
     static Item settings() {
         return shortcut(SETTINGS, "settings", Ui.tr("Ajustes", "Settings", "Ajustes"), "settings");
+    }
+
+    /** Header: Home, Play Store and Search (the three centered icons). */
+    static List<Item> headerActions() {
+        List<Item> items = new ArrayList<>();
+        items.add(shortcut(HOME, "home", Ui.tr("Início", "Home", "Inicio"), "home"));
+        items.add(shortcut(PLAY_STORE, "playstore", "Play Store", "playstore"));
+        items.add(shortcut(SEARCH, "search", Ui.tr("Buscar", "Search", "Buscar"), "search"));
+        return items;
     }
 
     /** Shortcuts in the bottom drawer. */
@@ -292,6 +303,13 @@ final class HomeApps {
                 break;
             case ANDROID_SETTINGS:
                 intent = new Intent(Settings.ACTION_SETTINGS);
+                break;
+            case PLAY_STORE:
+                intent = launchIntent(a.getPackageManager(), "com.android.vendors.vending");
+                if (intent == null) intent = launchIntent(a.getPackageManager(), "com.android.vending");
+                break;
+            case SEARCH:
+                intent = new Intent("android.search.action.GLOBAL_SEARCH");
                 break;
             default:
                 return false;
