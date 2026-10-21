@@ -75,10 +75,10 @@ final class HomeApps {
     }
 
     /**
-     * Apps on the home shelf, in this order, when installed (up to MAX_SHELF): key, name, package, brand color (for
-     * its logo on glass) and how to lift the logo from the app's TV art: "tint" = a white logo takes the art's
-     * background color (Prime Video, Globoplay); "play" = the white triangle inside the red button stays white
-     * (YouTube); empty = the art's colors as they are. Last, a visual size tweak for the logo. Edit freely.
+     * Apps on the home shelf, in this order, when installed: key, name, package, brand color (for its logo on glass)
+     * and how to lift the logo from the app's TV art: "tint" = a white logo takes the art's background color (Prime
+     * Video, Globoplay); "play" = the white triangle inside the red button stays white (YouTube); empty = the art's
+     * colors as they are. Last, a visual size tweak for the logo. Edit freely. Every installed app shows after these.
      */
     private static final String[][] SHELF = {
         {"netflix", "Netflix", "com.netflix.ninja", "E50914", "", "1"},
@@ -93,7 +93,6 @@ final class HomeApps {
         {"globoplay", "Globoplay", "com.globo.globotv", "FF5A1F", "tint", "1"},
         {"spotify", "Spotify", "com.spotify.tv.android", "1DB954", "", "1"},
     };
-    private static final int MAX_SHELF = 8;
     /** Live TV apps of some brands (the antenna's channels open through the standard Android request first). */
     static final String[] LIVE_TV_APPS = {"com.tcl.tv", "com.google.android.tv", "com.mediatek.wwtv.tvcenter", "com.sony.dtv.tvx"};
     /** Kept out of "All Apps" (only hidden, still installed). Add the ones your TV shows that you never use. */
@@ -113,11 +112,11 @@ final class HomeApps {
      * Home screen apps. `extract`: also lifts the logos that are not on disk yet (slow: background only); without it,
      * those apps keep their TV art until the next load.
      */
+    /** Home row: the curated apps first (with their logos), then every other installed TV app. */
     static List<Item> shelf(Context c, boolean extract) {
         List<Item> items = new ArrayList<>();
         PackageManager pm = c.getPackageManager();
         for (String[] d : SHELF) {
-            if (items.size() >= MAX_SHELF) break;
             if (launchIntent(pm, d[2]) == null) continue;
             Item it = new Item();
             it.kind = APP;
@@ -131,6 +130,7 @@ final class HomeApps {
             it.logoScale = Float.parseFloat(d[5]);
             items.add(it);
         }
+        items.addAll(others(c));
         return items;
     }
 

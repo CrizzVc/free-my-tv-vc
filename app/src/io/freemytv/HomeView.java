@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.BlurMaskFilter;
 import android.graphics.Canvas;
 import android.graphics.LinearGradient;
@@ -27,6 +28,7 @@ import android.view.ViewGroup;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.InputStream;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -36,16 +38,14 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * The home screen, styled after a modern TV launcher with the macOS 27 glass:
+ * The home screen, styled after a PS4 home over a fixed wallpaper (assets/wallpaper.png):
  *  - at the top, a Netflix-style header: three centered glass icon buttons (Home, Play Store, Search) with the
- *    focused one's name below it, and the clock at the right end of the same row;
- *  - three cards with the titles recommended for right now (Recs, from TMDB); the background is
- *    the first card's photo, heavily blurred and almost white (Backdrop); without one, a light gradient;
- *  - at the bottom, the glass shelf with the apps (icons in each brand's color, like the tvOS Dock; the focused one
- *    grows);
- *  - ↓ on the shelf: everything moves up and the bottom drawer appears (inputs, shortcuts, weather for the next hours
- *    and quotes with the 24 h change); the background lightens (darkens at night). ↑ or Back closes it;
- *  - from sunset to sunrise, a night look: dark background, smoked glass and white text.
+ *    focused one's name below it, and the clock at the right end of the same row; focusing one dims the wallpaper;
+ *  - the content is a single PS4-style row of portrait tiles (every installed app): the focused one grows, gets a
+ *    white rim and its name appears left-aligned under it; the row pans horizontally so all apps are reachable;
+ *  - ↓ on the row: everything moves up and the bottom drawer appears (inputs, shortcuts, weather for the next hours
+ *    and quotes with the 24 h change). ↑ or Back closes it;
+ *  - from sunset to sunrise, a night look: darkened wallpaper, smoked glass and white text.
  * Measurements are in a 1920×1080 space (k = width / 1920). The screen is split into layers so the TV's weak GPU only
  * redraws what changed.
  */
@@ -56,13 +56,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final float MARGIN = 80, CONTENT_R = 1840;
     // Hero, anchored at the bottom (a two-line title grows upward).
     private static final float HERO_TITLE_W = 900;
-    // Shelf: tiles with corners concentric with the glass (glass radius = tile radius + padding).
-    // Shelf like the tvOS 27 Dock: 5:3 icons (210 × 126) in each brand's color, 48 apart, and the glass bar hugging
-    // them with 40 of padding (the focused icon grows 20% without touching its edge).
-    private static final float SHELF_PAD = 40, TILE_GAP = 48;
-    private static final float TILE_RADIUS = 22, TILE_MAX_W = 270;
-    // Tile focus (Apple TV style): it grows from the center and its shadow drops (it "rises" toward the viewer).
-    private static final float FOCUS_GROW = 0.2f;
+    // Shelf (PS4-style row): portrait tiles like game covers, 40 apart; the focused one grows and gets a white rim,
+    // with its name below. The row pans horizontally so every installed app is reachable.
+    private static final float TILE_GAP = 40;
+    private static final float TILE_RADIUS = 14, TILE_W = 220, TILE_H = 330;
+    private static final float SHELF_TOP = 200;
+    // Tile focus: it grows from the center and its shadow drops (it "rises" toward the viewer).
+    private static final float FOCUS_GROW = 0.25f;
     // Corner capsule.
     // Corner capsule: the height and top offset of the tvOS tab bar (68 and 46).
     private static final float CAPSULE_TOP = 46, CAPSULE_H = 68, BUTTON = 56;
@@ -81,7 +81,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // the three recommendation cards on the 5-column grid (the wide one spans 3).
     private static final float L_HEADER_CY = 70, L_CARDS_TOP = 180, L_CARD_H = 460;
     private static final float L_TALL_W = 320, L_CARD_GAP = 40, L_BUTTON = 68, L_BUTTON_GAP = 56;
-    private static final float L_PLATTER_TOP = 814, L_TILE_H = 126;
     private static final int L_INK = 0xFF1D1D1F, L_DIM = 0xFF6E6E73, L_FAINT = 0xFF8E8E93;
     private static final int Z_TOP = 4, Z_CARDS = 5;
 
@@ -114,13 +113,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Spring[] cardFocus = new Spring[3];
     private final RectF[] cardRects = new RectF[3];
     private final List<HomeApps.Item> lightButtons = new ArrayList<>();
-    private Paint lCardTitle, lCardMeta, lTip, lClock;
+    private Paint lCardTitle, lCardMeta, lTip, lClock, lShelfName;
     private Shader lightGradient;
 
     // Shelf
     private List<HomeApps.Item> shelf = new ArrayList<>();
     private Spring[] tileFocus = new Spring[0];
     private RectF[] tileRects = new RectF[0];
+    private final Spring shelfPan = new Spring(0.32f, 0.88f, 0);   // horizontal scroll of the PS4-style row
     private final Map<String, Bitmap> crispLogos = new HashMap<>();   // logos already sized for the focused tile
     /** Each app's tile like its Apple TV icon: brand colors (top, bottom) and logo (0 = as is, 1 = white, 2 = dark). */
     private static final Map<String, int[]> TILE_STYLE = new HashMap<>();
@@ -155,6 +155,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final RectF heroButton = new RectF();
     private Backdrop bgFrom, bgTo;     // null = gradient (no photo)
     private final int[] frostMix = new int[Backdrop.FW * Backdrop.FH];
+    private Bitmap wallpaper;          // assets/wallpaper.png, the fixed background
 
     // Bottom drawer
     private List<HomeApps.Item> drawerItems = new ArrayList<>();
@@ -310,6 +311,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         setShelf(HomeApps.shelf(a, false));
         setStatusItems(statusList(a));
         setDrawerItems(drawerList(a));
+        // Wallpaper off the UI thread: the sky falls back to the light gradient until it arrives.
+        LOADER.execute(() -> {
+            final Bitmap b = loadWallpaper(a);
+            if (b != null) handler.post(() -> {
+                wallpaper = b;
+                sky.invalidate();
+            });
+        });
     }
 
     // MARK: - Lifecycle (called by HomeActivity)
@@ -519,7 +528,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean statusMoving = step(statusFocus, dt);
         boolean heroMoving = heroFocus.step(dt);
         boolean topMoving = step(topFocus, dt), cardsMoving = step(cardFocus, dt);
-        if (topMoving) status.invalidate();
+        boolean panMoving = shelfPan.step(dt);
+        if (panMoving) layoutShelf();
+        tilesMoving |= panMoving;
+        if (topMoving) {
+            status.invalidate();
+            sky.invalidate();    // the background dims behind the focused header button
+        }
         heroMoving |= topMoving | cardsMoving;
         boolean drawerItemsMoving = step(drawerFocus, dt);
         boolean gridMoving = step(gridFocus, dt) | scroll.step(dt);
@@ -797,12 +812,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return onLight + (onDark - onLight) * dark();
     }
 
-    /** Text colors for the current night value (dark by day, white at night). */
+    /** Text colors: always light, because the fixed wallpaper is dark. */
     private void applyTone() {
-        lCardTitle.setColor(tone(L_INK, WHITE));
-        lCardMeta.setColor(tone(L_DIM, 0xFF98989D));
-        lTip.setColor(tone(L_INK, WHITE));
-        lClock.setColor(tone(L_INK, WHITE));
+        lCardTitle.setColor(WHITE);
+        lCardMeta.setColor(0xFF98989D);
+        lTip.setColor(WHITE);
+        lClock.setColor(WHITE);
     }
 
     private boolean tickBackgroundFade(long up) {
@@ -960,7 +975,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 tileRects[i] = new RectF();
             }
             shelfIndex = Math.min(shelfIndex, Math.max(0, list.size() - 1));
+            crispLogos.clear();
             retarget(true);
+            layoutShelf();
+            panShelfTo(shelfIndex);
+            shelfPan.snap(shelfPan.target);
             layoutShelf();
         }
         tilesDirty = true;
@@ -969,31 +988,42 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private void layoutShelf() {
         int n = shelf.size();
-        float pad = SHELF_PAD * k, gap = TILE_GAP * k, th = L_TILE_H * k;
-        float full = (CONTENT_R - MARGIN) * k;
-        float tw = Math.min(TILE_MAX_W * k, (full - Math.max(0, n - 1) * gap) / Math.max(1, n));
-        float width = n * tw + Math.max(0, n - 1) * gap, left = (w - width) / 2f;
-        float top = L_PLATTER_TOP * k;
-        platterRect.set(left - pad, top, left + width + pad, top + th + 2 * pad);
-        float x = left, y = top + pad;
+        float gap = TILE_GAP * k, tw = TILE_W * k, th = TILE_H * k;
+        float total = n * tw + Math.max(0, n - 1) * gap;
+        float top = SHELF_TOP * k;
+        // Center the row when it fits; otherwise pan from the left edge (PS4 style).
+        float maxPan = Math.max(0, total - w);
+        float left = maxPan > 0 ? -Math.max(0, Math.min(maxPan, shelfPan.value)) : (w - total) / 2f;
+        platterRect.set(left, top, left + total, top + th);
+        float x = left;
         for (int i = 0; i < n; i++) {
-            tileRects[i].set(x, y, x + tw, y + th);
+            tileRects[i].set(x, top, x + tw, top + th);
             x += tw + gap;
         }
-        crispLogos.clear();
     }
 
-    /** Shelf layer: the glass bar and its shadow (it only changes with the background). */
+    /** Keeps the focused tile on screen: pans the row just enough (never farther than the ends). */
+    private void panShelfTo(int index) {
+        int n = shelf.size();
+        if (n == 0 || index < 0 || index >= tileRects.length) return;
+        float total = n * TILE_W * k + Math.max(0, n - 1) * TILE_GAP * k;
+        float maxPan = Math.max(0, total - w);
+        if (maxPan <= 0) {
+            shelfPan.target = 0;
+            return;
+        }
+        float tw = TILE_W * k, gap = TILE_GAP * k;
+        // left = -pan, so the tile is visible when pan ∈ [tileRight - w, tileLeft].
+        float tileLeft = index * (tw + gap), tileRight = tileLeft + tw;
+        float min = Math.max(0, tileRight - w), max = Math.min(maxPan, tileLeft);
+        float t = shelfPan.target;
+        if (t < min) t = min;
+        if (t > max) t = max;
+        shelfPan.target = Math.max(0, Math.min(maxPan, t));
+    }
+
+    /** No bar under the PS4-style row: each tile carries its own shadow. */
     private void drawPlatter(Canvas c) {
-        if (shelf.isEmpty()) return;
-        float radius = (TILE_RADIUS + SHELF_PAD) * k;
-        tmp.set(platterRect);
-        tmp.offset(0, 18 * k);
-        shadow.setColor(tone(0x1F000000, 0x52000000));
-        c.drawRoundRect(tmp, radius, radius, shadow);
-        // White glass by day; smoked glass at night.
-        scene.liquid(c, platterRect, radius, tone(0xFFFFFFFF, SMOKE), tone(0.42f, 0.12f), tone(0.03f, 0.08f),
-                tone(30, 34) * k, tone(22, 28) * k, tone(0.65f, 0.95f), 1);
     }
 
     private void drawTiles(Canvas c) {
@@ -1012,12 +1042,23 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 drawShelfTile(c, i);
             }
         }
+        // The focused app's name under its tile, left-aligned (PS4 style).
+        if (top >= 0 && !shelf.isEmpty()) {
+            float f = Ui.clamp(tileFocus[top].value);
+            String label = shelf.get(top).label;
+            if (lShelfName == null) {
+                lShelfName = Ui.text(Ui.semibold, 42 * k, 0xF2FFFFFF);
+            }
+            RectF r = tileRects[top];
+            float y = r.bottom + (52 + 8 * f) * k;
+            lShelfName.setAlpha(Math.round(255 * Math.max(f, 0.85f)));
+            c.drawText(label, Math.max(MARGIN * k, r.left), y, lShelfName);
+        }
     }
 
     /**
-     * App icon like the ones in the tvOS 27 Dock: the brand color edge to edge (a soft gradient) with the logo.
-     * Focused: it grows 20% from the center, with a deep shadow (it "rises" toward the viewer) and a subtle glow at the
-     * top. No border and no reflection, as Apple does it.
+     * App tile like a PS4 game cover: the brand color edge to edge (a soft gradient) with the logo, or the banner.
+     * Focused: it grows 25% from the center, with a deep shadow (it "rises" toward the viewer) and a white rim.
      */
     private void drawShelfTile(Canvas c, int i) {
         HomeApps.Item it = shelf.get(i);
@@ -1059,8 +1100,21 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             clip.addRoundRect(cell, r, r, Path.Direction.CW);
             c.save();
             c.clipPath(clip);
-            if (it.tile != null) c.drawBitmap(it.tile, null, cell, bitmapPaint);
+            if (it.tile != null) {
+                // Center-crop the 16:9 TV banner into the portrait cell (like a game cover).
+                float tw0 = it.tile.getWidth(), th0 = it.tile.getHeight();
+                float scale = Math.max(cell.width() / tw0, cell.height() / th0);
+                float dw = tw0 * scale, dh = th0 * scale;
+                tmp.set(cell.centerX() - dw / 2, cell.centerY() - dh / 2, cell.centerX() + dw / 2, cell.centerY() + dh / 2);
+                c.drawBitmap(it.tile, null, tmp, bitmapPaint);
+            }
             c.restore();
+        }
+        // White rim while focused (PS4 style).
+        if (fc > 0.01f) {
+            rim.setShader(null);
+            rim.setColor(Ui.alpha(0xFFFFFFFF, 0.95f * fc));
+            c.drawRoundRect(cell, r, r, rim);
         }
     }
 
@@ -1340,6 +1394,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean topChanged = aim(topFocus, !sheetOpen && zone == Z_TOP ? topIndex : -1, snap);
         heroChanged |= aim(cardFocus, !sheetOpen && zone == Z_CARDS ? cardIndex : -1, snap) | topChanged;
         statusChanged |= topChanged;
+        if (topChanged || snap) sky.invalidate();    // the header-focus veil lives on the sky layer
         tilesDirty |= snap || tilesChanged;
         statusDirty |= snap || statusChanged;
         heroDirty |= snap || heroChanged;
@@ -1629,6 +1684,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     int next = Math.max(0, Math.min(shelf.size() - 1, shelfIndex + dx));
                     if (next == shelfIndex) return;
                     shelfIndex = next;
+                    panShelfTo(shelfIndex);
                 } else if (dy < 0) {
                     if (hero != null && hero.button) {
                         zone = Z_HERO;
@@ -1815,14 +1871,63 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     /**
-     * Background: the first card's photo, heavily blurred and almost white; without it, a light gradient. At night, the
-     * same photo almost black (or a dark gradient), drawn on top during the transition.
+     * Background: the fixed wallpaper (assets/wallpaper.png), scaled to cover the screen; the header focus dims it
+     * (a black veil that follows the buttons' springs). The drawer still lightens/darkens it as before; without the
+     * file, the old light gradient remains as the fallback.
      */
     private void drawLightSky(Canvas c) {
+        if (wallpaper == null) {
+            drawLightSkyFallback(c);
+            return;
+        }
+        android.graphics.ColorFilter v = veil(tone(0.32f, 0.42f) * Ui.clamp(drawer.value), blend(0xFFFFFFFF, 0xFF000000, night));
+        // Cover the screen (center-crop), so any aspect ratio works without stretching.
+        float wa = wallpaper.getWidth() / (float) wallpaper.getHeight(), sa = w / (float) h;
+        float sw, sh, sx, sy;
+        if (wa > sa) {
+            sh = h;
+            sw = h * wa;
+            sx = (w - sw) / 2f;
+            sy = 0;
+        } else {
+            sw = w;
+            sh = w / wa;
+            sx = 0;
+            sy = (h - sh) / 2f;
+        }
+        tmp.set(sx, sy, sx + sw, sy + sh);
+        imagePaint.setColorFilter(v);
+        imagePaint.setAlpha(255);
+        c.drawBitmap(wallpaper, null, tmp, imagePaint);
+        // Night: a soft dark wash on top of the photo (same as the old nightImage blend).
+        if (night > 0.001f) {
+            fill.setShader(null);
+            fill.setColor(Ui.alpha(0xFF000000, 0.42f * night));
+            c.drawRect(screen, fill);
+        }
+        // Header focused: the background dims behind the glass buttons (PS4-like focus).
+        float dim = 0;
+        for (int i = 0; i < 3; i++) dim = Math.max(dim, Ui.clamp(topFocus[i].value));
+        if (dim > 0.01f) {
+            fill.setShader(null);
+            fill.setColor(Ui.alpha(0xFF000000, 0.48f * dim));
+            c.drawRect(screen, fill);
+        }
+        imagePaint.setColorFilter(null);
+    }
+
+    private static Bitmap loadWallpaper(Context c) {
+        try (InputStream in = c.getAssets().open("wallpaper.png")) {
+            return BitmapFactory.decodeStream(in);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private void drawLightSkyFallback(Canvas c) {
         long up = SystemClock.uptimeMillis();
         float e = bgFadeAt == 0 ? 1 : fadeEase(bgFadeAt, up);
         boolean fading = bgFadeAt != 0;
-        // Drawer open: the background lightens (by day) or darkens (at night), as a filter on the drawing itself.
         android.graphics.ColorFilter v = veil(tone(0.32f, 0.42f) * Ui.clamp(drawer.value), blend(0xFFFFFFFF, 0xFF000000, night));
         if (bgTo == null || (fading && bgFrom == null)) {
             if (lightGradient == null) lightGradient = new LinearGradient(0, 0, 0, h, 0xFFF5F5F7, 0xFFE2E2E7, Shader.TileMode.CLAMP);
@@ -1853,11 +1958,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void drawLightTop(Canvas c) {
-        applyTone();
-        int top = -1;
-        for (int i = 0; i < 3; i++) if (cardFocus[i].value > 0.02f && (top < 0 || cardFocus[i].value > cardFocus[top].value)) top = i;
-        for (int i = 0; i < 3; i++) if (i != top) drawLightCard(c, i);
-        if (top >= 0) drawLightCard(c, top);
+        // The recommendation cards are gone: the PS4-style app row is the content. The layer stays for the
+        // drawer shift animation (it draws nothing).
     }
 
     /**
@@ -1915,9 +2017,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     /**
-     * Home, Play Store and Search: icon-only glass circles centered at the top (light by day, smoked at night); the
-     * focused one turns white with a dark icon (the tvOS focus) and its name appears below it. The clock sits at the
-     * right end of the same row.
+     * Home, Play Store and Search: icon-only smoked-glass circles centered at the top (the wallpaper is dark, so the
+     * "night" glass always); the focused one turns white with a dark icon (the tvOS focus) and its name appears below
+     * it. The clock sits at the right end of the same row.
      */
     private void drawLightButtons(Canvas c) {
         applyTone();
@@ -1927,17 +2029,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             cell.set(r.centerX() - rad, r.centerY() - rad, r.centerX() + rad, r.centerY() + rad);
             tmp.set(cell);
             tmp.offset(0, (6 + 8 * f) * k);
-            shadow.setColor(Ui.alpha(0xFF000000, tone(0.1f, 0.3f) + tone(0.14f, 0.2f) * f));
+            shadow.setColor(Ui.alpha(0xFF000000, 0.3f + 0.2f * f));
             c.drawRoundRect(tmp, rad, rad, shadow);
-            scene.liquid(c, cell, rad, tone(0xFFFFFFFF, SMOKE), tone(0.55f, 0.5f), tone(0.02f, 0.01f), 12 * k, 8 * k,
-                    tone(0.6f, 0.45f), 1 - f);
+            scene.liquid(c, cell, rad, SMOKE, 0.5f, 0.01f, 12 * k, 8 * k, 0.45f, 1 - f);
             if (f > 0.01f) {
                 fill.setShader(null);
                 fill.setColor(Ui.alpha(0xFFFFFFFF, f));
                 c.drawCircle(cell.centerX(), cell.centerY(), rad, fill);
             }
             Symbols.draw(getContext(), c, lightButtons.get(i).symbol, cell.centerX(), cell.centerY(), 27 * k * s,
-                    blend(tone(L_INK, 0xEBFFFFFF), L_INK, f));
+                    blend(0xEBFFFFFF, L_INK, f));
             if (f > 0.01f) {
                 String label = lightButtons.get(i).label;
                 float half = lTip.measureText(label) / 2;
@@ -1955,26 +2056,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         switch (zone) {
             case Z_SHELF:
                 if (dy >= 0 || shelf.isEmpty()) return false;
-                if (cards.isEmpty()) {
-                    zone = Z_TOP;
-                    topIndex = nearest(topRects, 3, tileRects[shelfIndex].centerX());
-                } else {
-                    zone = Z_CARDS;
-                    cardIndex = nearest(cardRects, cards.size(), tileRects[shelfIndex].centerX());
-                }
-                break;
-            case Z_CARDS:
-                if (dx != 0) {
-                    int next = Math.max(0, Math.min(cards.size() - 1, cardIndex + dx));
-                    if (next == cardIndex) return true;
-                    cardIndex = next;
-                } else if (dy < 0) {
-                    zone = Z_TOP;
-                    topIndex = nearest(topRects, 3, cardRects[cardIndex].centerX());
-                } else {
-                    zone = Z_SHELF;
-                    if (!shelf.isEmpty()) shelfIndex = nearest(tileRects, tileRects.length, cardRects[cardIndex].centerX());
-                }
+                zone = Z_TOP;
+                topIndex = nearest(topRects, 3, tileRects[shelfIndex].centerX());
                 break;
             case Z_TOP:
                 if (dx != 0) {
@@ -1982,12 +2065,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     if (next == topIndex) return true;
                     topIndex = next;
                 } else if (dy > 0) {
-                    if (cards.isEmpty()) {
-                        zone = Z_SHELF;
-                    } else {
-                        zone = Z_CARDS;
-                        cardIndex = nearest(cardRects, cards.size(), topRects[topIndex].centerX());
-                    }
+                    zone = Z_SHELF;
                 } else {
                     return true;
                 }
